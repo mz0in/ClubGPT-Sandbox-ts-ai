@@ -7,14 +7,26 @@ import { MessageContentText } from 'openai/resources/beta/threads'
 import { Sandbox } from '@e2b/sdk'
 
 import { onLog } from './log'
-import { cloneRepo, loginWithGH } from './gh'
+import { cloneRepo, loginWithGH, listLastEditedRepos, createRepo } from './gh'
 import { sleep } from './sleep'
-import { listFiles, makeCommit, makeDir, makePullRequest, readFile, saveCodeToFile, runCode } from './actions'
+import { listFiles, makeCommit, makeDir, makePullRequest, readFile, saveCodeToFile, runCode, runPowershellCommand } from './actions'
 
 import { listAIDeveloper } from './aiAssistant-list'
 
 const openai = new OpenAI()
 
+//const AI_ASSISTANT_ID = process.env.AI_ASSISTANT_ID!
+
+async function initChat(): Promise<{ repoName: string; task: string; mode: string; AI_ASSISTANT_ID: string  }> {
+  let { mode } = (await prompts({
+    type: 'select',
+    name: 'mode',
+    message: 'Choose mode:',
+    choices: [
+      { title: 'Work in a repo', value: 'repo' },
+      { title: 'Just run code or commands', value: 'chit-chat' },
+    ],
+  })) as any
 
   // Function to prompt the user to select an AI assistant and return the selected assistant's ID
   async function selectAIAssistant(): Promise<string> {
@@ -38,29 +50,91 @@ const openai = new OpenAI()
     return aiAssistants[selectedAI].id;
   }
 
-  // Set the selected AI assistant
-  const AI_ASSISTANT_ID = await selectAIAssistant();
+  let repoName = '';
+  let task = '';
 
-async function initChat(): Promise<{ repoName: string; task: string }> {
-    let { repoName } = (await prompts({
-      type: 'text',
-      name: 'repoName',
-      message: 'Enter repo name (eg: username/repo):',
-    } as any)) as any
-  
-    // Replace any backslashes in the repo name with forward slashes
-    repoName = repoName.replace(/\\/g, '/');
-  
+  // Set the selected AI assistant
+  let AI_ASSISTANT_ID = await selectAIAssistant();
+
+  if (mode === 'repo') {
+
+    await loginWithGH(sandbox)
+
+    let { repoOption } = (await prompts({
+      type: 'select',
+      name: 'repoOption',
+      message: 'Choose an option for setting the repo:',
+      choices: [
+        { title: 'Select a repo from last 10', value: 'select' },
+        { title: 'Create a new repo', value: 'create' },
+        { title: 'Enter a repo name manually', value: 'manual' },
+      ],
+    })) as any;
+
+    switch (repoOption) {
+      case 'create':
+        let { newRepoName } = (await prompts({
+          type: 'text',
+          name: 'newRepoName',
+          message: 'Enter new repo name:',
+        })) as any;
+        let username = process.env.GIT_USERNAME;
+        await createRepo(sandbox, newRepoName);
+        repoName = `${username}/${newRepoName}`;
+        break;
+      case 'select':
+        let repos = await listLastEditedRepos(sandbox);  
+        let repoChoices = repos.map((repo, index) => ({
+          title: repo,
+          value: index,
+        }));
+        let { selectedRepo } = (await prompts({
+          type: 'select',
+          name: 'selectedRepo',
+          message: 'Select a repo:',
+          choices: repoChoices,
+        })) as any;
+        repoName = repos[selectedRepo];
+        break;
+      case 'manual':
+        let { manualRepoName } = (await prompts({
+          type: 'text',
+          name: 'manualRepoName',
+          message: 'Enter repo name (eg: username/repo):',
+        })) as any;
+        repoName = manualRepoName.replace(/\\/g, '/');
+        break;
+    }
+
+    await cloneRepo(sandbox, repoName)
+
     let { task } = (await prompts({
       type: 'text',
       name: 'task',
       message: 'Enter the task you want the AI developer to work on:',
-    } as any)) as any
-
-  return { repoName, task }
+    })) as any;
+  }
+  return { repoName, task, mode, AI_ASSISTANT_ID }
 }
-
-const { repoName, task } = await initChat()
+  
+function createThread(repoURL: string, task: string, mode: string) {
+  let content;
+  if (mode === 'repo') {
+    content = `Pull this repo: '${repoURL}'. Then carefully plan this task and start working on it: ${task}`;
+  } else if (mode === 'chit-chat') {
+    content = `Enter your first command or code:`;
+  } else {
+    content = 'Enter your first command or code:';
+  }
+  return openai.beta.threads.create({
+    messages: [
+      {
+        'role': 'user',
+        'content': content,
+      }
+    ]
+  })
+}
 
 const sandbox = await Sandbox.create({
   id: 'ai-developer-sandbox',
@@ -76,21 +150,14 @@ sandbox
   .addAction(makeDir)
   .addAction(listFiles)
   .addAction(runCode)
+  .addAction(runPowershellCommand)
 
-  await loginWithGH(sandbox)
-  await cloneRepo(sandbox, repoName)
+const { repoName, task, mode, AI_ASSISTANT_ID } = await initChat()
 
 const spinner = ora('Waiting for assistant')
 spinner.start()
 
-const thread = await openai.beta.threads.create({
-  messages: [
-    {
-      role: 'user',
-      content: `Pull this repo: '${repoName}'. Then carefully plan this task and start working on it: ${task}`,
-    },
-  ],
-})
+const thread = await createThread(repoName, task, mode)
 const assistant = await openai.beta.assistants.retrieve(AI_ASSISTANT_ID)
 
 let run = await openai.beta.threads.runs.create(thread.id, {

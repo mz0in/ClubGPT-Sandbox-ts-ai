@@ -1,8 +1,8 @@
 import OpenAI from 'openai'
 import 'dotenv/config'
 
-import { functions } from './aiFunctions'
-import { assistant_config } from './aiFunctions';
+import { functions } from './aiAssistant-functions'
+import { assistant_config } from './aiAssistant-functions';
 
 const openai = new OpenAI()
 
@@ -15,7 +15,8 @@ export async function createAIDeveloper() {
     model: assistant_config.model,
     name: assistant_config.name,
   })
-  console.log("Assistant ready, AI Developer Assistant ID that should be added to you .env file:", aiDeveloper.id)
+  //console.log("Assistant ready, AI Developer Assistant ID that should be added to you .env file:", aiDeveloper.id)
+  console.log("Assistant ready, AI Developer Assistant ID:", aiDeveloper.id)
 }
 
 createAIDeveloper()

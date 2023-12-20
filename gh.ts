@@ -30,6 +30,19 @@ git config --global push.autoSetupRemote true`,
   }
 }
 
+export async function createRepo(sandbox: Sandbox, repo: string) {
+  sandboxLog(`Creating repo ${repo}`)
+
+  const process = await sandbox.process.start({
+    cmd: `gh repo create ${repo} --private`,
+  })
+  const output = await process.wait()
+
+  if (output.exitCode !== 0) {
+    throw new Error(`Creating repo failed. ${output.stderr}`)
+  }
+}
+
 export async function cloneRepo(sandbox: Sandbox, repo: string) {
   sandboxLog(`Cloning repo ${repo}`)
 
@@ -55,7 +68,8 @@ export async function cloneRepo(sandbox: Sandbox, repo: string) {
   await setRemote.wait()
 }
 
-export async function listLastEditedRepos(sandbox: Sandbox, username: string) {
+export async function listLastEditedRepos(sandbox: Sandbox) {
+  const username = GIT_USERNAME;
   sandboxLog(`Listing last 10 edited repos of ${username}`)
 
   const process = await sandbox.process.start({
